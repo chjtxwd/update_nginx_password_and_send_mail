@@ -2,23 +2,15 @@
 import logging
 import secrets
 import crypt
-import sys
-from typing import List
 from aliyunsdkcore.client import AcsClient
-from aliyunsdkcore.acs_exception.exceptions import ClientException
-from aliyunsdkcore.acs_exception.exceptions import ServerException
 from aliyunsdkeci.request.v20180808 import ExecContainerCommandRequest 
-from alibabacloud_dm20151123.client import Client as Dm20151123Client
-from alibabacloud_tea_openapi import models as open_api_models
-from alibabacloud_dm20151123 import models as dm_20151123_models
-from alibabacloud_tea_util import models as util_models
-from alibabacloud_tea_util.client import Client as UtilClient  
+import smtplib
+import email
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.header import Header
+from email.utils import formataddr 
 
-# To enable the initializer feature (https://help.aliyun.com/document_detail/158208.html)
-# please implement the initializer function as below：
-# def initializer(context):
-#   logger = logging.getLogger()
-#   logger.info('initializing')
 def handler(event, context):
   logger = logging.getLogger()
   # generate nginx basic auth random password
@@ -36,12 +28,6 @@ def handler(event, context):
     "YOUR_SK",
     "cn-shanghai"
   );
-  # 创建 request，并设置参数
-  #request = DescribeInstancesRequest.DescribeInstancesRequest()
-  # request.set_PageSize(10)
-  # 发起 API 请求并打印返回
-  #response = client.do_action_with_exception(request)
-  #print (response)
   request = ExecContainerCommandRequest.ExecContainerCommandRequest()
   request.set_ContainerGroupId('eci-uf65xrte5f26h6tldlm6')
   request.set_ContainerName('container-1')
@@ -51,50 +37,57 @@ def handler(event, context):
   request.set_Command(command)
 
   response = client.do_action_with_exception(request)
-  class Sample:
-      def __init__(self):
-          pass
-
-      @staticmethod
-      def create_client(
-          access_key_id: str,
-          access_key_secret: str,
-      ) -> Dm20151123Client:
-          """
-          使用AK&SK初始化账号Client
-          @param access_key_id:
-          @param access_key_secret:
-          @return: Client
-          @throws Exception
-          """
-          config = open_api_models.Config(
-              # 您的 AccessKey ID,
-              access_key_id=access_key_id,
-              # 您的 AccessKey Secret,
-              access_key_secret=access_key_secret
-          )
-          # 访问的域名
-          config.endpoint = f'dm.aliyuncs.com'
-          return Dm20151123Client(config)
-
-      @staticmethod
-      def main(
-          args: List[str],
-      ) -> None:
-          client = Sample.create_client('YOUR_AK', 'YOUR_SK')
-          single_send_mail_request = dm_20151123_models.SingleSendMailRequest(
-              account_name='demo@mail.chjtxwd.top',
-              address_type=1,
-              to_address='h.cheng@elsevier.com',
-              subject='self test tool password change notification',
-              reply_to_address=True,
-              html_body='The password for test.elsevier.com changed to  '+secret
-          )
-          runtime = util_models.RuntimeOptions()
-          try:
-              # 复制代码运行请自行打印 API 的返回值
-              response = client.single_send_mail_with_options(single_send_mail_request, runtime)
-          except Exception as error:
-              # 如有需要，请打印 error
-              UtilClient.assert_as_string(error.message)
-  Sample.main(sys.argv[1:])
+  #set SMTP
+  # username，通过控制台创建的发信地址
+  username = 'usernam'
+  # password，通过控制台创建的SMTP密码
+  password = 'password'
+  # 自定义的回信地址，与控制台设置的无关。邮件推送发信地址不收信，收信人回信时会自动跳转到设置好的回信地址。
+  replyto = 'no-reply_self-diag-tool@elsevier.cn'
+  # 显示的To收信地址
+  rcptto = ['mail']
+  receivers = rcptto 
+  
+  # 构建alternative结构
+  msg = MIMEMultipart('alternative')
+  msg['Subject'] = Header('self test tool password change notification')
+  msg['From'] = formataddr(["no-reply_self-diag-tool", username])  # 昵称+发信地址(或代发)
+  # list转为字符串
+  msg['To'] = ",".join(rcptto)
+  msg['Reply-to'] = replyto
+  msg['Message-id'] = email.utils.make_msgid()
+  msg['Date'] = email.utils.formatdate()
+  html_body='The password for test.elsevier.com changed to  '+secret
+  # 构建alternative的text/html部分
+  texthtml = MIMEText(html_body, _subtype='html', _charset='UTF-8')
+  msg.attach(texthtml)
+  # 发送邮件
+  try:
+      # 若需要加密使用SSL，可以这样创建client
+      client = smtplib.SMTP_SSL('smtpdm.aliyun.com', 465)
+      # SMTP普通端口为25或80
+      # client = smtplib.SMTP('smtpdm.aliyun.com', 80)
+      # 开启DEBUG模式
+      client.set_debuglevel(0)
+      # 发件人和认证地址必须一致
+      client.login(username, password)
+      # 备注：若想取到DATA命令返回值,可参考smtplib的sendmail封装方法:
+      # 使用SMTP.mail/SMTP.rcpt/SMTP.data方法
+      # print(receivers)
+      client.sendmail(username, receivers, msg.as_string())  # 支持多个收件人，最多60个
+      client.quit()
+      print('邮件发送成功！')
+  except smtplib.SMTPConnectError as e:
+      print('邮件发送失败，连接失败:', e.smtp_code, e.smtp_error)
+  except smtplib.SMTPAuthenticationError as e:
+      print('邮件发送失败，认证错误:', e.smtp_code, e.smtp_error)
+  except smtplib.SMTPSenderRefused as e:
+      print('邮件发送失败，发件人被拒绝:', e.smtp_code, e.smtp_error)
+  except smtplib.SMTPRecipientsRefused as e:
+      print('邮件发送失败，收件人被拒绝:', e.smtp_code, e.smtp_error)
+  except smtplib.SMTPDataError as e:
+      print('邮件发送失败，数据接收拒绝:', e.smtp_code, e.smtp_error)
+  except smtplib.SMTPException as e:
+      print('邮件发送失败, ', str(e))
+  except Exception as e:
+      print('邮件发送异常, ', str(e))

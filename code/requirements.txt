@@ -1,5 +1,2 @@
 aliyunsdkcore
 aliyunsdkeci
-alibabacloud_dm20151123
-alibabacloud_tea_openapi
-alibabacloud_tea_util
